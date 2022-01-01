@@ -15,11 +15,13 @@ function install_stage3() {
 }
 
 function configure_base_system() {
-	einfo "Generating locales"
-	echo "$LOCALES" > /etc/locale.gen \
-		|| die "Could not write /etc/locale.gen"
-	locale-gen \
-		|| die "Could not generate locales"
+	if [[ $MUSL != "true" ]]; then
+		einfo "Generating locales"
+		echo "$LOCALES" > /etc/locale.gen \
+			|| die "Could not write /etc/locale.gen"
+		locale-gen \
+			|| die "Could not generate locales"
+	fi
 
 	if [[ $SYSTEMD == "true" ]]; then
 		einfo "Setting machine-id"
@@ -61,9 +63,11 @@ function configure_base_system() {
 		sed -i "/keymap=/c\\keymap=\"$KEYMAP\"" /etc/conf.d/keymaps \
 			|| die "Could not sed replace in /etc/conf.d/keymaps"
 
-		# Set locale
-		einfo "Selecting locale"
-		try eselect locale set "$LOCALE"
+		if [[ $MUSL != "true" ]]; then
+			# Set locale
+			einfo "Selecting locale"
+			try eselect locale set "$LOCALE"
+		fi
 	fi
 
 	# Update environment
@@ -296,7 +300,7 @@ function main_install_gentoo_in_chroot() {
 
 	# Install git (for git portage overlays)
 	einfo "Installing git"
-	try emerge --verbose dev-vcs/git
+	try emerge --verbose dev-vcs/git app-eselect/eselect-repository
 
 	if [[ "$PORTAGE_SYNC_TYPE" == "git" ]]; then
 		mkdir_or_die 0755 "/etc/portage/repos.conf"
@@ -318,6 +322,23 @@ EOF
 		rm -rf /var/db/repos/gentoo \
 			|| die "Could not delete obsolete rsync gentoo repository"
 		try emerge --sync
+	fi
+
+	# Configure musl overlay
+	if [[ $MUSL == "true" ]]; then
+		einfo "Configuring musl"
+		try eselect repository enable musl
+		try emerge --sync
+	fi
+
+	# Configure custom profile
+	if [[ -n $CUSTOM_PROFILE ]]; then
+		try eselect profile set $CUSTOM_PROFILE
+	fi
+
+	# Reinstall world
+	if [[ $MUSL == "true" || -n $CUSTOM_PROFILE ]]; then
+		try emerge -uvNDq @world
 	fi
 
 	# Install mdadm if we used raid (needed for uuid resolving)
