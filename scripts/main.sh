@@ -156,6 +156,46 @@ function get_cmdline() {
 		cmdline+=("root=UUID=$(get_blkid_uuid_for_id "$DISK_ID_ROOT")")
 	fi
 
+	# Kernel hardening
+	if [[ $HARDENING == "true" ]]; then
+	    # Disable slab merging
+		cmdline+=("slab_nomerge")
+		# Enable sanity checks (F) and redzoning (Z)
+		cmdline+=("slub_debug=FZ")
+		# Enable zeroing of memory during allocation and free time (since kernel 5.3)
+		cmdline+=("init_on_alloc=1 init_on_free=1")
+        # Randomize page allocator freelists, improving security by making page allocations less predictable
+		cmdline+=("page_alloc.shuffle=1")
+		# Randomize kernel stack
+		cmdline+=("randomize_kstack_offset=1")
+        # Enable Kernel Page Table Isolation which mitigates Meltdown and prevents some KASLR bypasses
+		cmdline+=("pti=on")
+		# Disable vsyscalls as they are obsolete and have been replaced with vDSO
+		cmdline+=("vsyscall=none")
+        # Disables debugfs which exposes a lot of sensitive information about the kernel
+		cmdline+=("debugfs=off")
+		# Make kernel oops (caused by exploits) cause kernel panic (disable this when your drivers keep crashing kernel)
+		cmdline+=("oops=panic")
+		# Allow loading only signed kernel modules
+		cmdline+=("module.sig_enforce=1")
+		# Lockdown kernel in confidentiality mode
+		cmdline+=("lockdown=confidentiality")
+		# Cause kernel to panic on uncorrectable errors in ECC memory which could be exploited
+		cmdline+=("mce=0")
+		# Silence boot logs to prevent leakage of sensitive information
+		cmdline+=("quiet loglevel=0")
+		# Mitigate CPU vulnerabilities
+		cmdline+=("spectre_v2=on spec_store_bypass_disable=on")
+		cmdline+=("tsx=off tsx_async_abort=full,nosmt mds=full,nosmt l1tf=full,force nosmt=force kvm.nx_huge_pages=force")
+		cmdline+=("l1tf=full,force l1d_flush=on")
+		# Mitigate DMA attacks
+		cmdline+=("intel_iommu=on efi=disable_early_pci_dma")
+		# Disable IPv6 (can be done in sysctl as well)
+		cmdline+=("ipv6.disable=1")
+		# Enable SELinux
+		cmdline+=("selinux=1 security=selinux")
+	fi
+
 	echo -n "${cmdline[*]}"
 }
 
@@ -268,6 +308,46 @@ function generate_fstab() {
 	fi
 }
 
+function hardening() {
+	# While most of these should be set during kernel configuration,
+	# better safe than sorry
+	mkdir -p /etc/sysctl.d
+	install -m0600 -o root -g root "$GENTOO_INSTALL_REPO_DIR/contrib/99-hardening.conf" /etc/sysctl.d/99-hardening.conf \
+		|| die "Could not install /etc/sysctl.d/99-hardening.conf"
+
+	# fstab
+	add_fstab_entry proc "/proc" proc "nosuid,nodev,noexec,hidepid=2,gid=proc" "0 0"
+	add_fstab_entry tmpfs "/tmp" tmpfs "rw,nosuid,nodev,noexec,size=8G,mode=1777" "0 0"
+	add_fstab_entry tmpfs "/dev/shm" tmpfs "rw,nosuid,nodev,noexec,size=1G" "0 0"
+
+	# Accounts hardening
+	mkdir -p /etc/pam.d
+	echo "password required pam_unix.so sha512 shadow nullok rounds=65536" >> /etc/pam.d/passwd
+	echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
+	echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su-l
+	# echo "" > /etc/securetty
+	# passwd -l root
+	useradd admin
+	useradd user
+	chmod -R go-rwx /home/*
+	chmod 700 /boot /usr/src /lib/modules /usr/lib/modules
+	echo "umask 0077" >> /etc/profile
+
+	# Sudo hardening
+	mkdir -p /etc/sudoers.d
+	echo "admin ALL=(ALL) ALL" > /etc/sudoers.d/admin-account
+    cat > /etc/sudoers.d/defaults <<EOF
+Defaults lecture=always
+Defaults timestamp_timeout=3
+Defaults passwd_tries=3, passwd_timeout=1
+Defaults passprompt="⚠️ [sudo] password for %p: "
+EOF
+
+	# Set up firewall
+	install -m0600 -o root -g root "$GENTOO_INSTALL_REPO_DIR/contrib/nftables.conf" /etc/nftables.conf \
+        || die "Could not install /etc/nftables.conf"
+}
+
 function main_install_gentoo_in_chroot() {
 	[[ $# == 0 ]] || die "Too many arguments"
 
@@ -328,7 +408,6 @@ EOF
 	if [[ $MUSL == "true" ]]; then
 		einfo "Configuring musl"
 		try eselect repository enable musl
-		try emerge --sync
 	fi
 
 	# Configure custom profile
@@ -338,6 +417,7 @@ EOF
 
 	# Reinstall world
 	if [[ $MUSL == "true" || -n $CUSTOM_PROFILE ]]; then
+		try emerge --sync
 		try emerge -uvNDq @world
 	fi
 
@@ -381,6 +461,9 @@ EOF
 
 	# Generate a valid fstab file
 	generate_fstab
+
+	# Invoke hardening steps
+	hardening
 
 	# Install gentoolkit
 	einfo "Installing gentoolkit"
