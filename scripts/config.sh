@@ -280,8 +280,9 @@ function expand_ids() {
 #   type=[efi|bios]       Selects the boot type. Defaults to efi if not given.
 #   luks=[true|false]     Encrypt root partition. Defaults to false if not given.
 #   root_fs=[ext4|btrfs]  Root filesystem
+#   size=<size>           Size of a root partition, or whole remaining disk if not given.
 function create_classic_single_disk_layout() {
-	local known_arguments=('+swap' '?type' '?luks' '?root_fs')
+	local known_arguments=('+swap' '?type' '?luks' '?root_fs' '?size')
 	local extra_arguments=()
 	declare -A arguments; parse_arguments "$@"
 
@@ -289,6 +290,7 @@ function create_classic_single_disk_layout() {
 		|| die_trace 1 "Expected exactly one positional argument (the device)"
 	local device="${extra_arguments[0]}"
 	local size_swap="${arguments[swap]}"
+	local size_root="${arguments[size]:-remaining}"
 	local type="${arguments[type]:-efi}"
 	local use_luks="${arguments[luks]:-false}"
 	local root_fs="${arguments[root_fs]:-ext4}"
@@ -297,7 +299,7 @@ function create_classic_single_disk_layout() {
 	create_partition new_id="part_$type" id=gpt size=256MiB       type="$type"
 	[[ $size_swap != "false" ]] \
 		&& create_partition new_id=part_swap    id=gpt size="$size_swap" type=swap
-	create_partition new_id=part_root    id=gpt size=remaining    type=linux
+	create_partition new_id=part_root    id=gpt size="$size_root"    type=linux
 
 	local root_id="part_root"
 	if [[ "$use_luks" == "true" ]]; then
