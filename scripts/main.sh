@@ -94,6 +94,8 @@ function configure_portage() {
 		einfo "Adding ~$GENTOO_ARCH to ACCEPT_KEYWORDS"
 		echo "ACCEPT_KEYWORDS=\"~$GENTOO_ARCH\"" >> /etc/portage/make.conf \
 			|| die "Could not modify /etc/portage/make.conf"
+		echo "MAKEOPTS=\"-j$(nproc)\"" >> /etc/portage/make.conf \
+			|| die "Could not modify /etc/portage/make.conf"
 	fi
 }
 
@@ -412,11 +414,13 @@ EOF
 
 	# Configure custom profile
 	if [[ -n $CUSTOM_PROFILE ]]; then
+	    einfo "Selecting profile $CUSTOM_PROFILE"
 		try eselect profile set $CUSTOM_PROFILE
 	fi
 
 	# Reinstall world
 	if [[ $MUSL == "true" || -n $CUSTOM_PROFILE ]]; then
+	    einfo "Rebuilding world with profile $CUSTOM_PROFILE"
 		try emerge --sync
 		try emerge -uvNDq @world
 	fi
