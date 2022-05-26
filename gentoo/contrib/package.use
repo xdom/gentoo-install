@@ -1,0 +1,5 @@
+*/* -systemd -X wayland
+dev-vcs/git -perl
+sys-apps/systemd-utils -* boot
+sys-boot/grub device-mapper
+
